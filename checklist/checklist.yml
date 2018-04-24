@@ -1,0 +1,78 @@
+- name: Checklist commands
+  hosts: all
+  become: true
+  serial: 1
+
+  tasks:
+  - name: check if system is managed by satellite
+    command: subscription-manager status
+    ignore_errors: yes
+    register: satellite_managed
+
+  - name: check ovirt-guest-agent
+    command: systemctl is-active ovirt-guest-agent > /dev/null
+    ignore_errors: yes
+    register: ovirt_agent
+
+  - name: check goferd
+    shell: systemctl is-active goferd > /dev/null
+    ignore_errors: yes
+    register: goferd_agent
+
+  - name: check forward dns
+    shell: nslookup `hostname -f` > /dev/null
+    ignore_errors: yes
+    register: forward_dns
+
+  - name: check reverse dns
+    shell: nslookup {{ ansible_default_ipv4.address }} > /dev/null
+    ignore_errors: yes
+    register: reverse_dns
+
+  - name: check ntp
+#    shell: chronyc sources | tail -2 | grep \* > /dev/null
+    shell: chronyc sources | tail -2 | grep \* | awk -F" " '{print $2}'
+    ignore_errors: yes
+    register: ntp_status
+
+  - name: check scap
+    shell: cat /etc/cron.d/foreman_scap_client_cron | grep foreman | grep root | awk -F" " '{print $7" "$8}'
+    ignore_errors: yes
+    register: scap_check
+
+  - name: run scap report
+    shell: "{{ scap_check.stdout }}"
+    ignore_errors: yes
+    register: scap_output
+    when: scap_check.rc == 0
+
+  - name: check installtime
+    shell: rpm -q basesystem --qf '%{installtime:date}\n'
+    ignore_errors: yes
+    register: installtime
+
+  - name: check activationkey
+    shell:  awk '/activationkey/' /root/anaconda-ks.cfg
+    ignore_errors: yes
+    register: activationkey
+
+  - name: check redhatrelease
+    shell: cat /etc/redhat-release
+    ignore_errors: yes
+    register: redhatrelease
+
+  - debug: var=satellite_managed.rc
+  - debug: var=ovirt_agent.rc
+  - debug: var=goferd_agent.rc
+  - debug: var=forward_dns.rc
+  - debug: var=reverse_dns.rc
+  - debug: var=ntp_status.rc
+  - debug: var=ntp_status.stdout_lines
+  - debug: var=scap_check.rc
+  - debug: var=scap_output.stdout
+  - debug: var=installtime.stdout
+  - debug: var=activationkey.stdout
+  - debug: var=redhatrelease.stdout
+
+
+  - local_action: lineinfile line="{{ ansible_hostname }};{{ 'Subscription Not Ok' if satellite_managed.rc else 'Subscription Ok' }};{{ 'RHEV-Agent Not Ok' if ovirt_agent.rc else 'RHEV-Agent Ok'}};{{ 'Forward DNS Not Ok' if forward_dns.rc else 'Forward DNS Ok' }};{{ 'Reverse DNS Not Ok' if reverse_dns.rc else 'Reverse DNS Ok' }};{{ 'NTP Not Ok' if ntp_status.rc else 'NTP Ok, connected to' }} {{ '' if ntp_status.rc else ntp_status.stdout }};{{ 'No openscap config found' if scap_check.rc else 'OpenSCAP Configuration found' }};{{ installtime.stdout }};{{ activationkey.stdout }};{{redhatrelease.stdout}}" dest=/tmp/renebenner insertafter=EOF
